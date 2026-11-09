@@ -8,6 +8,7 @@ class BrowserSession {
   constructor(options = {}) {
     this.profileDir = options.profileDir || config.instagram.profileDir;
     this.headless = options.headless !== undefined ? options.headless : config.instagram.headless;
+    this.channel = options.channel !== undefined ? options.channel : config.instagram.browserChannel;
     this.context = null;
     this.page = null;
     this._isInitializing = false;
@@ -43,16 +44,17 @@ class BrowserSession {
     try {
       this._prepareProfileDir();
 
-      logger.info('Launching Chromium with persistent context', {
+      logger.info('Launching browser with persistent context', {
         profileDir: this.profileDir,
         headless: this.headless,
+        channel: this.channel || 'bundled-chromium',
       });
 
       this.context = await chromium.launchPersistentContext(this.profileDir, {
         headless: this.headless,
+        // Use the installed Microsoft Edge so the packaged app doesn't ship Chromium.
+        ...(this.channel ? { channel: this.channel } : {}),
         viewport: { width: 1280, height: 800 },
-        userAgent:
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         args: [
           '--disable-blink-features=AutomationControlled',
           '--no-sandbox',
@@ -134,6 +136,49 @@ class BrowserSession {
     } catch (err) {
       logger.error('Error checking Instagram auth status', { error: err.message });
       return { authenticated: false, currentUrl: page.url(), error: err.message };
+    }
+  }
+
+  /**
+   * Opens a visible browser window on the Instagram login page and waits until
+   * the user has signed in (or closes the window / the timeout passes).
+   * The login is kept in the persistent profile for later batches.
+   * @param {Object} [options]
+   * @param {number} [options.timeoutMs=600000]
+   * @returns {Promise<{ authenticated: boolean, reason: string }>}
+   */
+  async interactiveLogin(options = {}) {
+    const timeoutMs = options.timeoutMs || 10 * 60 * 1000;
+
+    // Login must be visible: reopen headful if a headless context is running.
+    if (this.context && this.headless) await this.close();
+    const previousHeadless = this.headless;
+    this.headless = false;
+
+    try {
+      const page = await this.getPage();
+      await page.goto('https://www.instagram.com/accounts/login/', { waitUntil: 'domcontentloaded', timeout: 45000 });
+
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (!this.context || page.isClosed()) {
+          return { authenticated: false, reason: 'Browser window was closed before login finished' };
+        }
+        const url = page.url();
+        const onAuthPage = /\/accounts\/(login|emailsignup|onetap)|\/challenge\//.test(url);
+        if (!onAuthPage && url.includes('instagram.com')) {
+          const nav = await page.$('a[href*="/direct/inbox"], svg[aria-label*="Direct"], svg[aria-label*="Messenger"], svg[aria-label="Home"]').catch(() => null);
+          if (nav) {
+            logger.info('Instagram login detected and saved to profile');
+            return { authenticated: true, reason: 'Logged in' };
+          }
+        }
+        await new Promise(r => setTimeout(r, 2000));
+      }
+      return { authenticated: false, reason: 'Timed out waiting for login' };
+    } finally {
+      await this.close();
+      this.headless = previousHeadless;
     }
   }
 

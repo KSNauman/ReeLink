@@ -7,6 +7,19 @@ const { extractReelShortcode, normalizeReelUrl } = require('../utils/url-helper'
 const logger = require('../utils/logger');
 const config = require('../config');
 
+/**
+ * Sidebar pre-filter. The inbox list shows display names, not handles, so this
+ * only picks which chat to open. The strict allowlist check runs inside
+ * checkThreadForReels against the real @handle and fails closed.
+ * @param {string} name
+ * @returns {boolean}
+ */
+function looksLikeOwnerThread(name) {
+  const clean = (v) => String(v || '').toLowerCase().replace(/^@/, '').trim();
+  const n = clean(name);
+  return n.length > 0 && (n === clean(config.owner) || n === clean(config.ownerDisplayName));
+}
+
 class InstagramInbox {
   constructor(browserSession, options = {}) {
     this.session = browserSession;
@@ -20,11 +33,54 @@ class InstagramInbox {
     this.isBaselined = false;
     this.capturedCtaLinks = [];
     this._networkListenerAttached = false;
+    // DM commands (/start, /status, ...) are off in the desktop app: the Start
+    // button is the only trigger. Command messages are still skipped, never queued.
+    this.commandsEnabled = options.commandsEnabled === true;
   }
 
   async init() {
     this.page = await this.session.getPage();
     this._attachNetworkListener();
+  }
+
+  /**
+   * The browser is closed after every batch, so a page kept from an earlier run
+   * is dead. Reopens it when needed.
+   */
+  async _ensurePage() {
+    const closed = this.page && typeof this.page.isClosed === 'function' && this.page.isClosed();
+    if (!this.page || closed) {
+      this._networkListenerAttached = false;
+      await this.init();
+    }
+  }
+
+  /**
+   * Instagram draws the conversation list a few seconds after the HTML loads.
+   * Waits for it, and fails loudly if the session was sent to a login page.
+   * @param {number} [timeoutMs=20000]
+   */
+  async _waitForInboxReady(timeoutMs = 20000) {
+    const assertLoggedIn = () => {
+      if (/\/accounts\/login|\/challenge\//.test(this.page.url())) {
+        throw new Error('Instagram is not logged in. Click "Log in" first.');
+      }
+    };
+    assertLoggedIn();
+    if (typeof this.page.waitForFunction !== 'function') return;
+
+    try {
+      await this.page.waitForFunction(() => {
+        if (document.querySelector('a[href*="/direct/t/"]')) return true;
+        return Array.from(document.querySelectorAll('div[role="button"]')).some((el) => {
+          const text = (el.innerText || '').trim();
+          return text.length < 300 && /sent an attachment|Active|sent a message|liked a message|·/.test(text);
+        });
+      }, null, { timeout: timeoutMs });
+    } catch {
+      assertLoggedIn();
+      logger.warn('Inbox conversation list did not appear in time', { url: this.page.url() });
+    }
   }
 
   /**
@@ -71,6 +127,60 @@ class InstagramInbox {
   }
 
   /**
+   * Loads one chat and returns its message records from Instagram's own page data.
+   * Instagram also loads other chats in the background, so records are only
+   * accepted when they are tagged with this chat's ID.
+   * @param {string} threadId
+   * @param {{ timeoutMs?: number }} [options]
+   * @returns {Promise<Array|null>} message edges, or null if the chat couldn't be read
+   */
+  async readThreadEdges(threadId, options = {}) {
+    await this._ensurePage();
+    const timeoutMs = options.timeoutMs || 12000;
+    const page = this.page;
+    let edges = null;
+
+    const onResponse = async (response) => {
+      if (!response.url().includes('/api/graphql')) return;
+      try {
+        const text = await response.text();
+        if (!text.includes('slide_messages')) return;
+        const thread = JSON.parse(text)?.data?.get_slide_thread_nullable?.as_ig_direct_thread;
+        const found = thread?.slide_messages?.edges;
+        if (Array.isArray(found) && String(thread.thread_key) === String(threadId) && (!edges || found.length > edges.length)) {
+          edges = found;
+        }
+      } catch {}
+    };
+
+    page.on('response', onResponse);
+    try {
+      await page.goto(`https://www.instagram.com/direct/t/${threadId}/`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      const deadline = Date.now() + timeoutMs;
+      while (!edges && Date.now() < deadline) {
+        await page.waitForTimeout(500);
+      }
+      // Give a slightly later, fuller response the chance to arrive.
+      if (edges) await page.waitForTimeout(800);
+    } finally {
+      page.off('response', onResponse);
+    }
+    return edges;
+  }
+
+  /**
+   * Finds the chat with a creator.
+   * @param {string} creatorUsername
+   * @returns {Promise<string|null>} thread ID, or null if there's no chat yet
+   */
+  async findCreatorThreadId(creatorUsername) {
+    const { threadId } = await this.openCreatorThread(creatorUsername);
+    if (threadId && /^\d+$/.test(String(threadId))) return String(threadId);
+    const match = this.page.url().match(/\/direct\/t\/(\d+)/);
+    return match ? match[1] : null;
+  }
+
+  /**
    * Establishes a safe initial inbox baseline on listener startup.
    * Scans visible messages in authorized threads and marks them as processed
    * in SQLite so old historical messages sitting in the inbox are never newly ingested.
@@ -98,7 +208,7 @@ class InstagramInbox {
 
       let baselinedCount = 0;
       for (const thread of threads.slice(0, 5)) {
-        const isCandidate = isSenderAllowed(thread.username) || thread.username.toLowerCase().startsWith('nauman');
+        const isCandidate = looksLikeOwnerThread(thread.username);
         if (!isCandidate) continue;
 
         const reels = await this.checkThreadForReels(thread.threadId, thread.username, {
@@ -136,7 +246,7 @@ class InstagramInbox {
    * Navigates to Instagram Direct Inbox and verifies readiness.
    */
   async navigateToInbox() {
-    if (!this.page) await this.init();
+    await this._ensurePage();
 
     const currentUrl = this.page.url();
     if (!currentUrl.includes('/direct/inbox') && !currentUrl.includes('/direct/t/')) {
@@ -172,7 +282,7 @@ class InstagramInbox {
    * Navigates to Instagram Direct Message Requests and verifies readiness.
    */
   async navigateToRequests() {
-    if (!this.page) await this.init();
+    await this._ensurePage();
 
     const currentUrl = this.page.url();
     if (!currentUrl.includes('/direct/requests')) {
@@ -259,8 +369,8 @@ class InstagramInbox {
         if (!threads.some(t => t.threadId === activeThreadId)) {
           threads.unshift({
             threadId: activeThreadId,
-            username: 'Naumannn',
-            title: 'Naumannn',
+            username: config.ownerDisplayName,
+            title: config.ownerDisplayName,
             href: currentUrl,
             folder,
           });
@@ -279,6 +389,7 @@ class InstagramInbox {
    */
   async getInboxThreads(options = {}) {
     await this.navigateToInbox();
+    await this._waitForInboxReady();
     const primaryThreads = await this._extractThreadsFromPage('primary');
 
     if (options.includeRequests) {
@@ -309,7 +420,7 @@ class InstagramInbox {
    * @returns {Promise<Array<{ text: string, links: string[] }>>}
    */
   async getThreadMessages(threadId) {
-    if (!this.page) await this.init();
+    await this._ensurePage();
 
     if (threadId && !String(threadId).startsWith('row_') && threadId !== 'active') {
       const threadUrl = `https://www.instagram.com/direct/t/${threadId}/`;
@@ -454,7 +565,7 @@ class InstagramInbox {
    * @returns {Promise<{ threadId: string|null, folder: string, messages: Array<{ text: string, links: string[] }> }>}
    */
   async openCreatorThread(creatorUsername) {
-    if (!this.page) await this.init();
+    await this._ensurePage();
     this._attachNetworkListener();
 
     const cleanCreator = (creatorUsername || '').toLowerCase().replace(/^@/, '').trim();
@@ -615,7 +726,7 @@ class InstagramInbox {
    * @returns {Promise<Array<{ reelUrl: string, shortcode: string, threadId: string, senderUsername: string, source: string, messageId: string }>>}
    */
   async checkThreadForReels(threadId, hintUsername = null, options = {}) {
-    if (!this.page) await this.init();
+    await this._ensurePage();
     const { isSenderAllowed, assertSenderAllowed, normalizeSenderUsername } = require('../security/sender-allowlist');
     const queue = options.queue || this.queue;
     const isBaselineScan = options.isBaselineScan === true;
@@ -778,7 +889,7 @@ class InstagramInbox {
 
           if (!isBaselineScan) {
             const alreadyProcessed = queue ? queue.isMessageProcessed(cmdMessageId) : this.processedMessageIds.has(cmdMessageId);
-            if (!alreadyProcessed) {
+            if (!alreadyProcessed && this.commandsEnabled) {
               logger.info(`[BOT COMMAND] Intercepted /${cmdName} command from @${actualSender} in thread ${resolvedThreadId}`, { args: cmdArgs });
               await this.handleBotCommand(cmdName, String(resolvedThreadId), actualSender, cmdMessageId, cmdArgs);
             }
@@ -815,7 +926,7 @@ class InstagramInbox {
               }
               this.processedMessageIds.add(cmdMessageId);
 
-              if (this.sender) {
+              if (this.sender && this.commandsEnabled) {
                 const unknownMsg = `❓ Unrecognized command: "${cleanText}"\n\nSend /help or /menu to view all supported ReelLink commands.`;
                 await this.sender.sendMessage(String(resolvedThreadId), unknownMsg);
               }
@@ -1051,7 +1162,7 @@ class InstagramInbox {
 
       // Check the top 5 most recent threads
       for (const thread of threads.slice(0, 5)) {
-        const isCandidate = isSenderAllowed(thread.username) || thread.username.toLowerCase().startsWith('nauman');
+        const isCandidate = looksLikeOwnerThread(thread.username);
 
         // Security Gate: Reject unauthorized threads immediately
         if (!isCandidate) {
@@ -1101,11 +1212,16 @@ class InstagramInbox {
         targetThreads = [{ threadId: options.threadId, username: options.senderUsername || 'authorized_user' }];
       } else {
         const inboxThreads = await this.getInboxThreads();
-        targetThreads = inboxThreads.filter(t => isSenderAllowed(t.username)).slice(0, 5);
+        targetThreads = inboxThreads.filter(t => looksLikeOwnerThread(t.username)).slice(0, 5);
+        if (targetThreads.length === 0) {
+          const note = `Could not find the chat with @${config.owner} in the inbox (${inboxThreads.length} chats visible).`;
+          logger.warn(note);
+          if (this.app && typeof this.app._addLog === 'function') this.app._addLog(note);
+        }
       }
 
       for (const thread of targetThreads) {
-        if (!isSenderAllowed(thread.username)) continue;
+        if (!looksLikeOwnerThread(thread.username)) continue;
 
         // checkThreadForReels parses direct links, pasted URLs, and clip cards
         const reels = await this.checkThreadForReels(thread.threadId, thread.username, {
@@ -1146,8 +1262,9 @@ class InstagramInbox {
 
       return newEnqueuedJobs;
     } catch (err) {
+      // Let the batch report this: a failed scan must not look like "no new Reels".
       logger.error('Error collecting unprocessed Reels', { error: err.message });
-      return newEnqueuedJobs;
+      throw err;
     }
   }
 
@@ -1634,6 +1751,33 @@ class InstagramInbox {
    * @param {boolean} [options.isSimulation]
    * @returns {Promise<{ success: boolean, creator: string, isSimulated?: boolean, error?: string, note?: string }>}
    */
+  /**
+   * Reads the follow button on the open profile, waiting for Instagram to draw it.
+   * @param {{ timeoutMs?: number, until?: string }} [options] until: keep waiting for this state
+   * @returns {Promise<'FOLLOWING'|'REQUESTED'|'NOT_FOLLOWING'|'GONE'|'UNKNOWN'>}
+   */
+  async _readProfileFollowState(options = {}) {
+    const deadline = Date.now() + (options.timeoutMs || 10000);
+    let last = 'UNKNOWN';
+    while (Date.now() < deadline) {
+      const state = await this.page.evaluate(() => {
+        const labels = Array.from(document.querySelectorAll('header button, header div[role="button"]'))
+          .map(b => (b.innerText || '').trim().toLowerCase());
+        if (labels.includes('following')) return 'FOLLOWING';
+        if (labels.includes('requested')) return 'REQUESTED';
+        if (labels.includes('follow') || labels.includes('follow back')) return 'NOT_FOLLOWING';
+        if (/page isn.t available|profile isn.t available/i.test(document.body.innerText || '')) return 'GONE';
+        return null;
+      }).catch(() => null);
+      if (state) {
+        last = state;
+        if (!options.until || state === options.until) return state;
+      }
+      await this.page.waitForTimeout(400);
+    }
+    return options.until ? last : 'UNKNOWN';
+  }
+
   async unfollowCreatorDirect(creatorUsername, options = {}) {
     const cleanCreator = (creatorUsername || '').replace(/^@/, '').trim();
     const isSim = options.isSimulation !== undefined ? options.isSimulation : !this.isLiveMode;
@@ -1645,21 +1789,33 @@ class InstagramInbox {
     }
 
     try {
-      if (!this.page) await this.init();
+      await this._ensurePage();
       const profileUrl = `https://www.instagram.com/${cleanCreator}/`;
       logger.info('Navigating to creator profile to unfollow', { profileUrl, creator: cleanCreator });
       await this.page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await this.page.waitForTimeout(2500);
+      const timeoutMs = options.timeoutMs || 10000;
+      const state = await this._readProfileFollowState({ timeoutMs });
 
-      const followingBtn = await this.page.$('header button:has-text("Following"), header div[role="button"]:has-text("Following")');
-      if (!followingBtn) {
-        logger.info('Not currently following or Following button not found', { creator: cleanCreator });
+      if (state === 'NOT_FOLLOWING' || state === 'GONE') {
+        logger.info('Nothing to unfollow', { creator: cleanCreator, state });
         if (this.queue) this.queue.markCreatorUnfollowed(cleanCreator);
-        return { success: true, creator: cleanCreator, note: 'Not currently following' };
+        return { success: true, creator: cleanCreator, note: state };
+      }
+      if (state === 'UNKNOWN') {
+        logger.warn('Could not read follow state; keeping creator tracked', { creator: cleanCreator });
+        return { success: false, creator: cleanCreator, error: 'Could not read the follow button on the profile' };
       }
 
-      await followingBtn.click();
-      await this.page.waitForTimeout(1500);
+      const clicked = await this.page.evaluate(() => {
+        const wanted = ['following', 'requested'];
+        const button = Array.from(document.querySelectorAll('header button, header div[role="button"]'))
+          .find(b => wanted.includes((b.innerText || '').trim().toLowerCase()));
+        if (button) button.click();
+        return Boolean(button);
+      });
+      if (!clicked) return { success: false, creator: cleanCreator, error: 'Following button disappeared' };
+
+      await this.page.waitForSelector('div[role="dialog"]', { timeout: 5000 }).catch(() => {});
 
       // Confirm unfollow in modal
       const unfollowConfirmed = await this.page.evaluate(() => {
@@ -1673,8 +1829,18 @@ class InstagramInbox {
         }
         return false;
       });
+      if (!unfollowConfirmed) {
+        logger.warn('Unfollow dialog did not appear; keeping creator tracked', { creator: cleanCreator });
+        return { success: false, creator: cleanCreator, error: 'Unfollow confirmation did not appear' };
+      }
 
-      await this.page.waitForTimeout(2000);
+      // Trust it only once the profile shows "Follow" again.
+      const after = await this._readProfileFollowState({ timeoutMs, until: 'NOT_FOLLOWING' });
+      if (after !== 'NOT_FOLLOWING') {
+        logger.warn('Unfollow could not be verified; keeping creator tracked', { creator: cleanCreator, after });
+        return { success: false, creator: cleanCreator, error: 'Instagram did not confirm the unfollow' };
+      }
+
       if (this.queue) this.queue.markCreatorUnfollowed(cleanCreator);
       logger.info('Successfully unfollowed creator', { creator: cleanCreator, unfollowConfirmed });
       return { success: true, creator: cleanCreator };

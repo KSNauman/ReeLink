@@ -28,13 +28,13 @@ test('Command Security: Authorized vs Unauthorized Senders', async () => {
   };
   const inbox = new InstagramInbox(null, { queue, sender: mockSender, isLiveMode: false });
 
-  // 1. Authorized senders: nauman, ksydn_, NAUMAN, @ksydn_
-  assert.strictEqual(isSenderAllowed('nauman'), true);
+  // 1. Only the hardcoded owner is authorized (case and @ are normalized)
   assert.strictEqual(isSenderAllowed('ksydn_'), true);
-  assert.strictEqual(isSenderAllowed('NAUMAN'), true);
+  assert.strictEqual(isSenderAllowed('KSYDN_'), true);
   assert.strictEqual(isSenderAllowed('@ksydn_'), true);
+  assert.strictEqual(isSenderAllowed('@naumannn'), false);
 
-  await inbox.handleBotCommand('help', 'thread_1', 'nauman', 'msg_cmd_auth_1');
+  await inbox.handleBotCommand('help', 'thread_1', 'ksydn_', 'msg_cmd_auth_1');
   assert.strictEqual(deliveredDMs.length, 1);
   assert.ok(deliveredDMs[0].text.includes('ReelLink Bot Commands'));
 
@@ -83,7 +83,7 @@ test('Commands never become Reel jobs in SQLite', async () => {
 
   for (let i = 0; i < commandsToTest.length; i++) {
     const item = commandsToTest[i];
-    await inbox.handleBotCommand(item.cmd, 'thread_test', 'nauman', `msg_no_reel_${i}`, item.args);
+    await inbox.handleBotCommand(item.cmd, 'thread_test', 'ksydn_', `msg_no_reel_${i}`, item.args);
   }
 
   // All commands executed without adding Reel jobs to the jobs table
@@ -105,8 +105,8 @@ test('Command Aliases and Formats: /help, /menu, !help, !menu', async () => {
   const inbox = new InstagramInbox(null, { queue, sender: mockSender });
 
   // Test help and menu
-  await inbox.handleBotCommand('help', 'thread_1', 'nauman', 'msg_h1');
-  await inbox.handleBotCommand('menu', 'thread_1', 'nauman', 'msg_m1');
+  await inbox.handleBotCommand('help', 'thread_1', 'ksydn_', 'msg_h1');
+  await inbox.handleBotCommand('menu', 'thread_1', 'ksydn_', 'msg_m1');
 
   assert.strictEqual(deliveredDMs.length, 2);
   for (const dm of deliveredDMs) {
@@ -124,18 +124,18 @@ test('Status Command: Accurate breakdown, uptime, mode, and error summaries', as
 
   // Seed jobs across different statuses
   // 1. Pending job
-  const j1 = queue.createJob({ threadId: 't1', senderUsername: 'nauman', reelUrl: 'https://instagram.com/reel/STATUS1/', shortcode: 'STATUS1' });
+  const j1 = queue.createJob({ threadId: 't1', senderUsername: 'ksydn_', reelUrl: 'https://instagram.com/reel/STATUS1/', shortcode: 'STATUS1' });
   
   // 2. Awaiting approval job
   const j2 = queue.createJob({ threadId: 't2', senderUsername: 'ksydn_', reelUrl: 'https://instagram.com/reel/STATUS2/', shortcode: 'STATUS2' });
   queue.updateStatus(j2.job.id, 'AWAITING_APPROVAL', { resultSummary: 'Awaiting operator approval to follow @creator2' });
 
   // 3. Completed job
-  const j3 = queue.createJob({ threadId: 't3', senderUsername: 'nauman', reelUrl: 'https://instagram.com/reel/STATUS3/', shortcode: 'STATUS3' });
+  const j3 = queue.createJob({ threadId: 't3', senderUsername: 'ksydn_', reelUrl: 'https://instagram.com/reel/STATUS3/', shortcode: 'STATUS3' });
   queue.updateStatus(j3.job.id, 'COMPLETED', { resultSummary: 'Comment posted successfully' });
 
   // 4. Failed job
-  const j4 = queue.createJob({ threadId: 't4', senderUsername: 'nauman', reelUrl: 'https://instagram.com/reel/STATUS4/', shortcode: 'STATUS4' });
+  const j4 = queue.createJob({ threadId: 't4', senderUsername: 'ksydn_', reelUrl: 'https://instagram.com/reel/STATUS4/', shortcode: 'STATUS4' });
   queue.updateStatus(j4.job.id, 'FAILED', { errorMessage: 'Instagram session rate limited' });
 
   const deliveredDMs = [];
@@ -147,7 +147,7 @@ test('Status Command: Accurate breakdown, uptime, mode, and error summaries', as
   };
 
   const inbox = new InstagramInbox(null, { queue, sender: mockSender, isLiveMode: false });
-  await inbox.handleBotCommand('status', 't1', 'nauman', 'msg_stat_1');
+  await inbox.handleBotCommand('status', 't1', 'ksydn_', 'msg_stat_1');
 
   assert.strictEqual(deliveredDMs.length, 1);
   const statusText = deliveredDMs[0].text;
@@ -169,7 +169,7 @@ test('History Command: Distinguishes Live vs Simulation follows and reports rece
   const queue = new JobQueue(db);
 
   // 1. Seed a simulated interaction
-  const j1 = queue.createJob({ threadId: 't1', senderUsername: 'nauman', reelUrl: 'https://instagram.com/reel/HIST_SIM/', shortcode: 'HIST_SIM' });
+  const j1 = queue.createJob({ threadId: 't1', senderUsername: 'ksydn_', reelUrl: 'https://instagram.com/reel/HIST_SIM/', shortcode: 'HIST_SIM' });
   queue.createOrGetCreatorInteraction(j1.job.id, {
     creatorUsername: 'sim_creator',
     shortcode: 'HIST_SIM',
@@ -213,7 +213,7 @@ test('History Command: Distinguishes Live vs Simulation follows and reports rece
   };
 
   const inbox = new InstagramInbox(null, { queue, sender: mockSender });
-  await inbox.handleBotCommand('history', 't1', 'nauman', 'msg_hist_1');
+  await inbox.handleBotCommand('history', 't1', 'ksydn_', 'msg_hist_1');
 
   assert.strictEqual(deliveredDMs.length, 1);
   const histText = deliveredDMs[0].text;
@@ -234,18 +234,18 @@ test('Reset Safety: Protects active and completed jobs, preserves duplicate hist
   const queue = new JobQueue(db);
 
   // 1. Create a COMPLETED job
-  const jCompleted = queue.createJob({ threadId: 't1', senderUsername: 'nauman', reelUrl: 'https://instagram.com/reel/DONE01/', shortcode: 'DONE01', messageId: 'msg_done_1' });
+  const jCompleted = queue.createJob({ threadId: 't1', senderUsername: 'ksydn_', reelUrl: 'https://instagram.com/reel/DONE01/', shortcode: 'DONE01', messageId: 'msg_done_1' });
   queue.updateStatus(jCompleted.job.id, 'COMPLETED');
 
   // 2. Create an EXTRACTING (active) job
-  const jActive = queue.createJob({ threadId: 't1', senderUsername: 'nauman', reelUrl: 'https://instagram.com/reel/ACTIVE01/', shortcode: 'ACTIVE01', messageId: 'msg_act_1' });
+  const jActive = queue.createJob({ threadId: 't1', senderUsername: 'ksydn_', reelUrl: 'https://instagram.com/reel/ACTIVE01/', shortcode: 'ACTIVE01', messageId: 'msg_act_1' });
   queue.updateStatus(jActive.job.id, 'EXTRACTING');
 
   // 3. Create a PENDING job
-  const jPending = queue.createJob({ threadId: 't1', senderUsername: 'nauman', reelUrl: 'https://instagram.com/reel/PEND01/', shortcode: 'PEND01', messageId: 'msg_pend_1' });
+  const jPending = queue.createJob({ threadId: 't1', senderUsername: 'ksydn_', reelUrl: 'https://instagram.com/reel/PEND01/', shortcode: 'PEND01', messageId: 'msg_pend_1' });
 
   // 4. Create an AWAITING_APPROVAL job
-  const jAwaiting = queue.createJob({ threadId: 't1', senderUsername: 'nauman', reelUrl: 'https://instagram.com/reel/WAIT01/', shortcode: 'WAIT01', messageId: 'msg_wait_1' });
+  const jAwaiting = queue.createJob({ threadId: 't1', senderUsername: 'ksydn_', reelUrl: 'https://instagram.com/reel/WAIT01/', shortcode: 'WAIT01', messageId: 'msg_wait_1' });
   queue.updateStatus(jAwaiting.job.id, 'AWAITING_APPROVAL');
 
   const deliveredDMs = [];
@@ -265,7 +265,7 @@ test('Reset Safety: Protects active and completed jobs, preserves duplicate hist
   const inbox = new InstagramInbox(null, { queue, sender: mockSender, app: mockApp });
 
   // Step A: Preview reset (no confirmation)
-  await inbox.handleBotCommand('reset', 't1', 'nauman', 'msg_res_prev');
+  await inbox.handleBotCommand('reset', 't1', 'ksydn_', 'msg_res_prev');
   assert.strictEqual(deliveredDMs.length, 1);
   assert.ok(deliveredDMs[0].text.includes('ReelLink Reset Preview'));
   assert.ok(deliveredDMs[0].text.includes('Found 2 job(s) eligible for reset')); // PENDING and AWAITING_APPROVAL only!
@@ -278,7 +278,7 @@ test('Reset Safety: Protects active and completed jobs, preserves duplicate hist
   assert.strictEqual(queue.getJobById(jAwaiting.job.id).status, 'AWAITING_APPROVAL');
 
   // Step B: Execute confirmed reset
-  await inbox.handleBotCommand('reset', 't1', 'nauman', 'msg_res_exec', 'confirm');
+  await inbox.handleBotCommand('reset', 't1', 'ksydn_', 'msg_res_exec', 'confirm');
   assert.strictEqual(deliveredDMs.length, 2);
   assert.ok(deliveredDMs[1].text.includes('ReelLink Reset Complete'));
   assert.ok(deliveredDMs[1].text.includes('Cancelled 2 eligible'));
@@ -302,7 +302,7 @@ test('Unfollow Safety: Preview requirement and simulation/live safety', async ()
   const queue = new JobQueue(db);
 
   // Seed followed creators today
-  const j1 = queue.createJob({ threadId: 't1', senderUsername: 'nauman', reelUrl: 'https://instagram.com/reel/UNF01/', shortcode: 'UNF01' });
+  const j1 = queue.createJob({ threadId: 't1', senderUsername: 'ksydn_', reelUrl: 'https://instagram.com/reel/UNF01/', shortcode: 'UNF01' });
   queue.createOrGetCreatorInteraction(j1.job.id, {
     creatorUsername: 'creator_to_unf',
     shortcode: 'UNF01',
@@ -327,7 +327,7 @@ test('Unfollow Safety: Preview requirement and simulation/live safety', async ()
   const inbox = new InstagramInbox(null, { queue, sender: mockSender, isLiveMode: false });
 
   // 1. Preview without confirm
-  await inbox.handleBotCommand('unfollow', 't1', 'nauman', 'msg_unf_prev');
+  await inbox.handleBotCommand('unfollow', 't1', 'ksydn_', 'msg_unf_prev');
   assert.strictEqual(deliveredDMs.length, 1);
   assert.ok(deliveredDMs[0].text.includes('ReelLink Unfollow Preview'));
   assert.ok(deliveredDMs[0].text.includes('@creator_to_unf'));
@@ -338,7 +338,7 @@ test('Unfollow Safety: Preview requirement and simulation/live safety', async ()
   assert.strictEqual(creatorsBefore.length, 1);
 
   // 2. Confirmed unfollow in simulation mode
-  await inbox.handleBotCommand('unfollow', 't1', 'nauman', 'msg_unf_conf', 'confirm');
+  await inbox.handleBotCommand('unfollow', 't1', 'ksydn_', 'msg_unf_conf', 'confirm');
   assert.strictEqual(deliveredDMs.length, 3); // Preview + Progress + Complete
   assert.ok(deliveredDMs[1].text.includes('Unfollowing 1 creator(s)'));
   assert.ok(deliveredDMs[2].text.includes('ReelLink Unfollow Complete'));
@@ -354,7 +354,7 @@ test('Unfollow Safety: Blocks unfollow execution while active browser job is run
   const queue = new JobQueue(db);
 
   // Seed followed creator
-  const j1 = queue.createJob({ threadId: 't1', senderUsername: 'nauman', reelUrl: 'https://instagram.com/reel/UNF_LIVE/', shortcode: 'UNF_LIVE' });
+  const j1 = queue.createJob({ threadId: 't1', senderUsername: 'ksydn_', reelUrl: 'https://instagram.com/reel/UNF_LIVE/', shortcode: 'UNF_LIVE' });
   queue.createOrGetCreatorInteraction(j1.job.id, {
     creatorUsername: 'busy_creator',
     shortcode: 'UNF_LIVE',
@@ -385,7 +385,7 @@ test('Unfollow Safety: Blocks unfollow execution while active browser job is run
   const inbox = new InstagramInbox(null, { queue, sender: mockSender, app: mockApp, isLiveMode: true });
 
   // Try executing confirmed unfollow while active job is processing
-  await inbox.handleBotCommand('unfollow', 't1', 'nauman', 'msg_unf_blocked', 'confirm');
+  await inbox.handleBotCommand('unfollow', 't1', 'ksydn_', 'msg_unf_blocked', 'confirm');
 
   assert.strictEqual(deliveredDMs.length, 1);
   assert.ok(deliveredDMs[0].text.includes('Cannot unfollow right now: a Reel job is actively being processed'));
@@ -409,7 +409,7 @@ test('Duplicate Command Ingestion Prevention', async () => {
   const inbox = new InstagramInbox(null, { queue, sender: mockSender });
 
   // First execution
-  await inbox.handleBotCommand('help', 'thread_1', 'nauman', 'msg_id_unique_1');
+  await inbox.handleBotCommand('help', 'thread_1', 'ksydn_', 'msg_id_unique_1');
   assert.strictEqual(deliveredDMs.length, 1);
 
   // Same messageId processed in DB
@@ -439,7 +439,7 @@ test('Regression: Follow-First-Then-Comment Workflow is strictly enforced', () =
   // Verify creator interaction schema always expects follow first
   const { db } = createTestDb('workflow_follow_first');
   const queue = new JobQueue(db);
-  const j = queue.createJob({ threadId: 't', senderUsername: 'nauman', reelUrl: 'https://instagram.com/reel/WF01/', shortcode: 'WF01' });
+  const j = queue.createJob({ threadId: 't', senderUsername: 'ksydn_', reelUrl: 'https://instagram.com/reel/WF01/', shortcode: 'WF01' });
 
   const interaction = queue.createOrGetCreatorInteraction(j.job.id, {
     creatorUsername: 'wf_creator',

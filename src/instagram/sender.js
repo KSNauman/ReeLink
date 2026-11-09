@@ -20,7 +20,7 @@ class InstagramSender {
    * @param {string} threadId
    */
   async _focusMessageInput(threadId) {
-    if (!this.page) await this.init();
+    if (!this.page || (typeof this.page.isClosed === 'function' && this.page.isClosed())) await this.init();
 
     const threadUrl = `https://www.instagram.com/direct/t/${threadId}/`;
     if (!this.page.url().includes(threadId)) {
@@ -30,6 +30,11 @@ class InstagramSender {
         timeout: 30000,
       });
       await this.page.waitForTimeout(1500);
+    }
+
+    // Instagram draws the message box a few seconds after the page loads.
+    if (typeof this.page.waitForSelector === 'function') {
+      await this.page.waitForSelector('div[role="textbox"][contenteditable="true"], textarea[placeholder*="Message"]', { timeout: 15000 }).catch(() => {});
     }
 
     // Try multiple selector patterns for Instagram message input

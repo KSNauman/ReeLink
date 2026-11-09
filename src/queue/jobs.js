@@ -398,7 +398,7 @@ class JobQueue {
     const stuck = this.db
       .prepare(`
         SELECT * FROM jobs 
-        WHERE status IN ('EXTRACTING', 'SEARCHING', 'PROCESSING')
+        WHERE status IN ('EXTRACTING', 'SEARCHING', 'PROCESSING', 'INTERACTING')
       `)
       .all();
 
@@ -494,15 +494,15 @@ class JobQueue {
   /**
    * Creates or gets a creator interaction record for a job.
    */
-  createOrGetCreatorInteraction(jobId, { creatorUsername, shortcode, requiresFollow = 0, requiresComment = 0, keyword = null, isSimulated = 0 }) {
+  createOrGetCreatorInteraction(jobId, { creatorUsername, shortcode, requiresFollow = 0, requiresComment = 0, keyword = null, isSimulated = 0, topic = null }) {
     const existing = this.getCreatorInteraction(jobId);
     if (existing) return existing;
 
     const id = crypto.randomUUID();
     const stmt = this.db.prepare(`
       INSERT INTO creator_interactions (
-        id, job_id, creator_username, shortcode, requires_follow, requires_comment, keyword, is_simulated
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        id, job_id, creator_username, shortcode, requires_follow, requires_comment, keyword, is_simulated, topic
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -513,7 +513,8 @@ class JobQueue {
       requiresFollow ? 1 : 0,
       requiresComment ? 1 : 0,
       keyword || null,
-      isSimulated ? 1 : 0
+      isSimulated ? 1 : 0,
+      topic || null
     );
 
     return this.getCreatorInteraction(jobId);
@@ -551,6 +552,10 @@ class JobQueue {
       'waiting_since',
       'initial_window_expires_at',
       'last_inbox_check_at',
+      'topic',
+      'creator_thread_id',
+      'reply_note',
+      'reply_notified_at',
     ];
 
     for (const key of allowed) {
@@ -1039,7 +1044,11 @@ class JobQueue {
           if (isLive) {
             entry.isLive = true;
             entry.isSimulated = false;
-            entry.followedAt = r.live_follow_verified_at || entry.followedAt;
+            // Rows arrive newest first: keep the latest date, so sharing a new Reel
+            // from a creator restarts their 48-hour protection.
+            if (r.live_follow_verified_at && !(new Date(entry.followedAt) > new Date(r.live_follow_verified_at))) {
+              entry.followedAt = r.live_follow_verified_at;
+            }
           }
         }
       }
@@ -1092,6 +1101,90 @@ class JobQueue {
       protected: protectedList,
       all: [...eligible, ...protectedList],
     };
+  }
+
+  // ───────────── Creator replies & collected resources ─────────────
+
+  /** Live, commented Reels whose creator reply is still outstanding. */
+  getInteractionsAwaitingReply() {
+    return this.db.prepare(`
+      SELECT ci.*, j.thread_id AS owner_thread_id
+      FROM creator_interactions ci
+      JOIN jobs j ON j.id = ci.job_id
+      WHERE ci.is_simulated = 0
+        AND ci.live_comment_posted_at IS NOT NULL
+        AND ci.reply_status IN ('WAITING', 'NEEDS_YOU')
+      ORDER BY ci.live_comment_posted_at ASC
+    `).all();
+  }
+
+  /** @returns {boolean} true when this link is new for this Reel */
+  saveResource(jobId, { url, label = null, messageText = null, messageAt = null }) {
+    const res = this.db.prepare(`
+      INSERT OR IGNORE INTO resources (job_id, url, label, message_text, message_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(jobId, url, label, messageText, messageAt);
+    return res.changes > 0;
+  }
+
+  /** Links not yet sent to the owner, plus who they belong to. */
+  getUndeliveredResources() {
+    return this.db.prepare(`
+      SELECT r.id, r.job_id, r.url, r.label, ci.creator_username, ci.topic, ci.shortcode
+      FROM resources r
+      JOIN creator_interactions ci ON ci.job_id = r.job_id
+      WHERE r.delivered_at IS NULL
+      ORDER BY r.id ASC
+    `).all();
+  }
+
+  markResourcesDelivered(ids = []) {
+    const stmt = this.db.prepare("UPDATE resources SET delivered_at = datetime('now') WHERE id = ?");
+    for (const id of ids) stmt.run(id);
+  }
+
+  /** Reels that need the owner's attention and haven't been reported yet. */
+  getUnnotifiedNeedsYou() {
+    return this.db.prepare(`
+      SELECT job_id, creator_username, topic, reply_note
+      FROM creator_interactions
+      WHERE reply_status = 'NEEDS_YOU' AND reply_notified_at IS NULL AND is_simulated = 0
+    `).all();
+  }
+
+  markNeedsYouNotified(jobIds = []) {
+    const stmt = this.db.prepare("UPDATE creator_interactions SET reply_notified_at = datetime('now') WHERE job_id = ?");
+    for (const id of jobIds) stmt.run(id);
+  }
+
+  countWaitingForReply() {
+    return this.db.prepare(`
+      SELECT COUNT(*) AS c FROM creator_interactions
+      WHERE is_simulated = 0 AND live_comment_posted_at IS NOT NULL AND reply_status = 'WAITING'
+    `).get().c;
+  }
+
+  /** The owner's real DM thread, used to send the summary back. */
+  getOwnerThreadId() {
+    const row = this.db.prepare(`
+      SELECT thread_id FROM jobs
+      WHERE thread_id NOT LIKE 'row_%' AND thread_id != 'default_thread'
+      ORDER BY created_at DESC LIMIT 1
+    `).get();
+    return row ? row.thread_id : null;
+  }
+
+  /** One row per link, or one row for a Reel with no link yet. Newest first. */
+  getResourcesReport() {
+    return this.db.prepare(`
+      SELECT ci.live_comment_posted_at AS commented_at, ci.creator_username, ci.topic, ci.shortcode,
+             ci.keyword, ci.reply_status, ci.reply_note, ci.creator_thread_id,
+             r.url, r.label
+      FROM creator_interactions ci
+      LEFT JOIN resources r ON r.job_id = ci.job_id
+      WHERE ci.is_simulated = 0 AND ci.live_comment_posted_at IS NOT NULL
+      ORDER BY ci.live_comment_posted_at DESC, r.id ASC
+    `).all();
   }
 
   /**

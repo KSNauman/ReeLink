@@ -1,9 +1,9 @@
 /**
  * Unit Tests for Sender Allowlist Security Rules
  * Verifies:
- * 1. 'nauman' is accepted.
- * 2. 'ksydn_' is accepted.
- * 3. Case differences and a leading '@' are normalized (@Nauman, @KSYDN_).
+ * 1. The hardcoded owner ('ksydn_') is accepted.
+ * 2. Every other account is rejected.
+ * 3. Case differences and a leading '@' are normalized (@Ksydn_).
  * 4. Unauthorized sender creates no processing job and triggers no Instagram actions.
  * 5. Missing or ambiguous sender identity is rejected (fail closed).
  * 6. Resumed or retried jobs cannot bypass allowlist.
@@ -33,28 +33,24 @@ function cleanupDb() {
 test.beforeEach(cleanupDb);
 test.after(cleanupDb);
 
-test('Sender Allowlist: 1. nauman is accepted', () => {
-  assert.strictEqual(isSenderAllowed('nauman'), true);
-  assert.strictEqual(assertSenderAllowed('nauman', { stage: 'TEST' }), true);
-});
-
-test('Sender Allowlist: 2. ksydn_ is accepted', () => {
+test('Sender Allowlist: 1. the hardcoded owner is accepted', () => {
+  assert.strictEqual(config.owner, 'ksydn_');
+  assert.deepStrictEqual(getEffectiveAllowedSenders(), ['ksydn_']);
   assert.strictEqual(isSenderAllowed('ksydn_'), true);
   assert.strictEqual(assertSenderAllowed('ksydn_', { stage: 'TEST' }), true);
 });
 
-test('Sender Allowlist: 3. Case differences and leading @ are normalized', () => {
-  // nauman variations
-  assert.strictEqual(isSenderAllowed('@nauman'), true);
-  assert.strictEqual(isSenderAllowed('Nauman'), true);
-  assert.strictEqual(isSenderAllowed('@NAUMAN'), true);
-  assert.strictEqual(isSenderAllowed('  @Nauman  '), true);
+test('Sender Allowlist: 2. former allowlist accounts and look-alikes are rejected', () => {
+  for (const name of ['nauman', 'naumannn', 'ksydn', 'ksydn__']) {
+    assert.strictEqual(isSenderAllowed(name), false, `${name} must be rejected`);
+  }
+});
 
-  // ksydn_ variations
+test('Sender Allowlist: 3. Case differences and leading @ are normalized', () => {
   assert.strictEqual(isSenderAllowed('@ksydn_'), true);
-  assert.strictEqual(isSenderAllowed('KSYDN_'), true);
-  assert.strictEqual(isSenderAllowed('@Ksydn_'), true);
-  assert.strictEqual(isSenderAllowed('  @KSYDN_  '), true);
+  assert.strictEqual(isSenderAllowed('Ksydn_'), true);
+  assert.strictEqual(isSenderAllowed('@KSYDN_'), true);
+  assert.strictEqual(isSenderAllowed('  @Ksydn_  '), true);
 
   // Normalization helper tests
   assert.strictEqual(normalizeSenderUsername('@nauman'), 'nauman');

@@ -127,3 +127,6 @@ $RECYCLE.BIN/
 *.tmp
 *.temp
 *.bak
+
+# Desktop build output
+dist/

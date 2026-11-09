@@ -29,3 +29,33 @@ test('parseReelMetadata: identifies CTA comment keyword when direct link is miss
   assert.strictEqual(metadata.ctaKeyword, 'DOCKER');
   assert.strictEqual(metadata.directResourceUrls.length, 0);
 });
+
+test('parseOgDescription reads the current "caption - @handle on date" format', () => {
+  const { parseOgDescription } = require('../../src/pipeline/extract-reel');
+  const r = parseOgDescription('Want it? follow + comment “link” and i’ll send it!\n\n#tag - @some.creator_1 on November 7, 2026');
+  assert.strictEqual(r.creator, 'some.creator_1');
+  assert.ok(r.caption.endsWith('#tag'));
+  assert.ok(!r.caption.includes('@some.creator_1'));
+});
+
+test('parseOgDescription reads the older "likes - handle on date: quoted" format', () => {
+  const { parseOgDescription } = require('../../src/pipeline/extract-reel');
+  const r = parseOgDescription('348 likes, 1,725 comments - creator_handle on March 3, 2025: "Comment ROADMAP below"');
+  assert.strictEqual(r.creator, 'creator_handle');
+  assert.strictEqual(r.caption, 'Comment ROADMAP below');
+});
+
+test('parseOgDescription never invents a creator', () => {
+  const { parseOgDescription } = require('../../src/pipeline/extract-reel');
+  assert.deepStrictEqual(parseOgDescription('just a caption'), { creator: '', caption: 'just a caption' });
+  assert.deepStrictEqual(parseOgDescription(''), { creator: '', caption: '' });
+});
+
+test('A quoted keyword is used even when the word is otherwise too generic', () => {
+  const { extractCreatorRequirements } = require('../../src/pipeline/creator-interaction');
+  const quoted = extractCreatorRequirements('follow + comment “link” and i will send it', '', { defaultToEmoji: true });
+  assert.strictEqual(quoted.keyword, 'link');
+  assert.strictEqual(extractCreatorRequirements('Comment "guide" below', '', { defaultToEmoji: true }).keyword, 'guide');
+  // Unquoted generic words still aren't treated as the keyword
+  assert.strictEqual(extractCreatorRequirements('Comment below for more', '', { defaultToEmoji: true }).keyword, '🙌');
+});

@@ -162,6 +162,10 @@ class Database {
       'live_follow_verified_at TEXT',
       'live_comment_posted_at TEXT',
       'live_comment_verified_at TEXT',
+      'topic TEXT',
+      'creator_thread_id TEXT',
+      'reply_note TEXT',
+      'reply_notified_at TEXT',
     ];
     for (const col of columnsToEnsure) {
       try {
@@ -170,6 +174,21 @@ class Database {
         // Column already exists
       }
     }
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS resources (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+        url TEXT NOT NULL,
+        label TEXT,
+        message_text TEXT,
+        message_at TEXT,
+        delivered_at TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(job_id, url)
+      );
+      CREATE INDEX IF NOT EXISTS idx_resources_job ON resources(job_id);
+    `);
 
     logger.debug('Database tables verified and indexed');
   }

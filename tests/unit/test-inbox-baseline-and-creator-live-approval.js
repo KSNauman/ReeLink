@@ -161,7 +161,7 @@ test('3. A genuinely new Reel message creates one job', async () => {
   const newReel = {
     messageId: 'msg_178421_nauman_clip_9999',
     threadId: '17842115300129061',
-    senderUsername: 'nauman',
+    senderUsername: 'ksydn_',
     shortcode: 'DdTtvIop21E',
     reelUrl: 'https://www.instagram.com/reel/DdTtvIop21E/',
     enforceAllowlist: true,
@@ -171,7 +171,7 @@ test('3. A genuinely new Reel message creates one job', async () => {
   assert.strictEqual(isDuplicate, false);
   assert.ok(job);
   assert.strictEqual(job.shortcode, 'DdTtvIop21E');
-  assert.strictEqual(job.sender_username, 'nauman');
+  assert.strictEqual(job.sender_username, 'ksydn_');
   assert.strictEqual(job.message_id, 'msg_178421_nauman_clip_9999');
   assert.strictEqual(job.status, 'PENDING');
 });
@@ -289,7 +289,7 @@ test('6. Unauthorized and missing-identity senders create no jobs', async () => 
   const resNauman = queue.createJob({
     messageId: 'msg_nauman_ok',
     threadId: 'thread_1',
-    senderUsername: '@NAUMAN',
+    senderUsername: '@KSYDN_',
     reelUrl: 'https://www.instagram.com/reel/DehhaYQSc_I/',
     enforceAllowlist: true,
   });
@@ -543,7 +543,7 @@ test('12. A crash during processing recovers safely without duplicate actions or
   const { job: jobUndelivered } = queue.createJob({
     messageId: 'msg_crash_undelivered',
     threadId: '17842115300129061',
-    senderUsername: 'nauman',
+    senderUsername: 'ksydn_',
     reelUrl: 'https://www.instagram.com/reel/DehhaYQSc_I/',
   });
   queue.updateStatus(jobUndelivered.id, JOB_STATUS.SEARCHING);

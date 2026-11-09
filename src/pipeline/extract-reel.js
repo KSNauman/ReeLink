@@ -78,6 +78,26 @@ function parseReelMetadata({ shortcode, caption = '', creator = '', rawText = ''
 }
 
 /**
+ * Pulls creator + caption out of a post's og:description. Instagram uses two formats:
+ *   Caption text... - @handle on November 7, 2026
+ *   348 likes, 12 comments - handle on March 3, 2025: "Caption text..."
+ * @param {string} og
+ * @returns {{ creator: string, caption: string }}
+ */
+function parseOgDescription(og) {
+  const text = String(og || '').trim();
+  if (!text) return { creator: '', caption: '' };
+
+  const quoted = text.match(/(?:-\s+|^)@?([a-zA-Z0-9_.]+)\s+on\s+[^:]+:\s*["“]([\s\S]*)["”]\s*\.?$/);
+  if (quoted) return { creator: quoted[1], caption: quoted[2].trim() };
+
+  const trailing = text.match(/^([\s\S]*?)\s*-\s+@([a-zA-Z0-9_.]+)\s+on\s+[A-Za-z]+\s+\d{1,2},\s+\d{4}\s*$/);
+  if (trailing) return { creator: trailing[2], caption: trailing[1].trim() };
+
+  return { creator: '', caption: text };
+}
+
+/**
  * Fetches public Reel web page metadata using Playwright or HTTP fetch.
  * Uses authenticated Playwright browser session when available.
  * @param {string} reelUrl
@@ -97,7 +117,9 @@ async function fetchReelPublicData(reelUrl, browserSession) {
     try {
       const page = await browserSession.getPage();
       logger.info('Inspecting public Reel page via browser session...', { reelUrl });
-      await page.goto(reelUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      // /reel/ links now redirect to the scrolling Reels feed (many Reels on one page).
+      // /p/ is a single post, so everything read here belongs to this Reel.
+      await page.goto(`https://www.instagram.com/p/${shortcode}/`, { waitUntil: 'domcontentloaded', timeout: 30000 });
       await page.waitForTimeout(2000);
 
       // Dismiss any cookie or notification prompts
@@ -107,17 +129,6 @@ async function fetchReelPublicData(reelUrl, browserSession) {
         );
         if (promptBtn && (await promptBtn.isVisible())) {
           await promptBtn.click().catch(() => {});
-          await page.waitForTimeout(500);
-        }
-      } catch {}
-
-      // Try expanding caption if "... more" button is visible
-      try {
-        const moreBtn = await page.$(
-          'span:has-text("more"), div[role="button"]:has-text("more"), button:has-text("more")'
-        );
-        if (moreBtn && (await moreBtn.isVisible())) {
-          await moreBtn.click().catch(() => {});
           await page.waitForTimeout(500);
         }
       } catch {}
@@ -160,16 +171,9 @@ async function fetchReelPublicData(reelUrl, browserSession) {
             'meta[property="og:description"], meta[name="description"]',
             el => el.getAttribute('content')
           );
-          if (ogDesc) {
-            // Format: "348 likes, 1,725 comments - creator_handle on Date: "Caption text..."
-            const match = ogDesc.match(/(?:-\s+|^)([a-zA-Z0-9_.-]+)\s+on\s+[^:]+:\s*"([\s\S]*)"/);
-            if (match) {
-              if (!creator) creator = match[1].trim();
-              if (!caption) caption = match[2].trim();
-            } else if (!caption) {
-              caption = ogDesc.trim();
-            }
-          }
+          const parsed = parseOgDescription(ogDesc);
+          if (!creator) creator = parsed.creator;
+          if (!caption) caption = parsed.caption;
         } catch {
           // Fall back to DOM elements
         }
@@ -191,18 +195,15 @@ async function fetchReelPublicData(reelUrl, browserSession) {
         } catch {}
       }
 
-      // 4. Fallback to DOM elements if needed
+      // 4. Fallback: first profile link inside the post itself (never the site navigation)
       if (!creator) {
-        const creatorEl = await page.$(
-          'header a[href^="/"], a[role="link"][tabindex="0"][href^="/"]:not([href*="/reel/"]):not([href*="/p/"]):not([href*="/explore/"])'
-        );
-        if (creatorEl) {
-          const href = (await creatorEl.getAttribute('href')) || '';
-          const match = href.match(/^\/([a-zA-Z0-9_.-]+)\/?/);
-          if (match && !['reel', 'reels', 'p', 'explore', 'direct'].includes(match[1])) {
-            creator = match[1].trim();
-          } else {
-            creator = ((await creatorEl.innerText()) || '').replace(/^@/, '').trim();
+        const hrefs = await page.$$eval('main a[href^="/"]', links => links.map(a => a.getAttribute('href')));
+        const reserved = ['reel', 'reels', 'p', 'explore', 'direct', 'accounts', 'popular', 'stories'];
+        for (const href of hrefs) {
+          const match = (href || '').match(/^\/([a-zA-Z0-9_.]+)\/(?:reels\/)?$/);
+          if (match && !reserved.includes(match[1]) && !match[1].toLowerCase().startsWith('dolphin.')) {
+            creator = match[1];
+            break;
           }
         }
       }
@@ -222,6 +223,7 @@ async function fetchReelPublicData(reelUrl, browserSession) {
 }
 
 module.exports = {
+  parseOgDescription,
   parseReelMetadata,
   fetchReelPublicData,
 };

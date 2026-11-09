@@ -1,41 +1,55 @@
 {
   "name": "reellink",
   "version": "0.1.0",
-  "description": "Autonomous Instagram Reel Resource Discovery Bot",
-  "main": "src/app.js",
+  "description": "ReelLink: personal Windows desktop app that follows creators and comments their keyword on Reels you share to your bot account",
+  "main": "desktop/main.js",
   "scripts": {
-    "start": "node src/app.js",
-    "dashboard": "node src/app.js --live --auto-approve",
-    "start:live": "node src/app.js --live",
-    "start:auto": "node src/app.js --live --auto-approve",
-    "approve": "node src/approve.js",
-    "dev": "node --watch src/app.js",
-    "setup:session": "node src/instagram/setup-session.js",
-    "test": "node --test tests/unit/*.js tests/integration/*.js tests/e2e/*.js",
+    "start": "electron .",
+    "start:sim": "electron . --simulate",
+    "dist": "electron-builder --win nsis",
+    "test": "node --test tests/unit/*.js tests/integration/*.js",
     "test:unit": "node --test tests/unit/*.js",
-    "test:integration": "node --test tests/integration/*.js",
-    "test:e2e": "node --test tests/e2e/*.js",
-    "test:supervised": "node tests/live-test-supervised.js",
-    "test:creator:supervised": "node tests/test-creator-supervised-live.js",
-    "test:benchmark": "node tests/benchmark-runner.js",
-    "clean:browser": "powershell -Command \"Stop-Process -Name chrome, chromium -Force -ErrorAction SilentlyContinue; Remove-Item -Path 'data/browser_profile/SingletonLock' -Force -ErrorAction SilentlyContinue\"",
-    "start:clean": "npm run clean:browser && npm run start:auto"
+    "test:integration": "node --test tests/integration/*.js"
   },
   "keywords": [
     "instagram",
     "reels",
     "automation",
     "playwright",
-    "sqlite",
-    "ocr",
-    "whisper"
+    "electron"
   ],
   "author": "ReelLink Team",
   "license": "ISC",
   "dependencies": {
     "dotenv": "^16.4.7",
-    "ffmpeg-static": "^5.3.0",
-    "playwright": "^1.50.0",
-    "tesseract.js": "^7.0.0"
+    "playwright": "^1.50.0"
+  },
+  "devDependencies": {
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.ksnauman.reellink",
+    "productName": "ReelLink",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "desktop/**",
+      "src/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/playwright-core/**"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "desktop/assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
   }
 }

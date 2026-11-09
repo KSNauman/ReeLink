@@ -27,7 +27,7 @@ function normalizeSenderUsername(username) {
  * @returns {string[]}
  */
 function getEffectiveAllowedSenders(customAllowlist = null) {
-  const source = customAllowlist || config.security?.allowedSenders || config.instagram?.allowedUsers || ['nauman', 'ksydn_'];
+  const source = customAllowlist || config.security?.allowedSenders || [];
   return source
     .map(u => normalizeSenderUsername(u))
     .filter(Boolean);
@@ -50,10 +50,7 @@ function isSenderAllowed(rawUsername, customAllowlist = null) {
     return false;
   }
 
-  return (
-    allowed.includes(normalized) ||
-    (normalized === 'naumannn' && allowed.includes('nauman'))
-  );
+  return allowed.includes(normalized);
 }
 
 /**

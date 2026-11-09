@@ -77,7 +77,7 @@ test('JobQueue lifecycle: creation, deduplication, retry, and crash recovery', a
   // 6. Crash Recovery Test
   const { job: stalledJob } = queue.createJob({
     threadId: 'thread_456',
-    senderUsername: 'nauman',
+    senderUsername: 'ksydn_',
     reelUrl: 'https://www.instagram.com/reel/STALLED_01/',
     shortcode: 'STALLED_01',
   });

@@ -131,7 +131,10 @@ function extractCreatorRequirements(caption = '', ocrText = '', options = {}) {
     const match = combined.match(pattern);
     if (match && match[1]) {
       const candidateKeyword = match[1].trim();
-      if (!KEYWORD_NOISE_WORDS.has(candidateKeyword.toLowerCase()) && candidateKeyword.length >= 2) {
+      // A word the creator put in quotes or brackets is the keyword, even a generic one like "link".
+      const beforeWord = match[0].slice(0, match[0].lastIndexOf(match[1]));
+      const isExplicit = /["'“\[]\s*$/.test(beforeWord);
+      if ((isExplicit || !KEYWORD_NOISE_WORDS.has(candidateKeyword.toLowerCase())) && candidateKeyword.length >= 2) {
         requiresComment = true;
         // Preserve exact spelling and capitalization from creator's caption
         keyword = candidateKeyword;
@@ -619,10 +622,10 @@ class CreatorInteractionManager {
    * @param {Object} [options]
    * @returns {Promise<{ success: boolean, error?: string }>}
    */
-  async forwardLatestCreatorMessage(creatorUsername, targetUsername = 'Naumannn', options = {}) {
+  async forwardLatestCreatorMessage(creatorUsername, targetUsername = config.owner, options = {}) {
     const isSim = options.isSimulation !== undefined ? options.isSimulation : this.cfg.simulationMode;
     const cleanCreator = creatorUsername.replace(/^@/, '').trim();
-    const cleanTarget = (targetUsername || 'Naumannn').replace(/^@/, '').trim();
+    const cleanTarget = (targetUsername || config.owner).replace(/^@/, '').trim();
 
     if (isSim) {
       logger.info('⚡ [SIMULATION] Forwarding creator message natively', {
@@ -719,7 +722,7 @@ class CreatorInteractionManager {
         const leafNodes = Array.from(dialog.querySelectorAll('*')).filter(el => el.children.length === 0);
         const matchNode = leafNodes.find(el => {
           const t = (el.innerText || '').trim().toLowerCase();
-          return t === targetLower || t === 'ksydn_' || t === 'naumannn' || (targetLower.length > 3 && t.includes(targetLower));
+          return t === targetLower || (targetLower.length > 3 && t.includes(targetLower));
         });
 
         if (matchNode) {
@@ -1728,7 +1731,8 @@ class CreatorInteractionManager {
     }
 
     // Step 4: COMMENT THE REQUESTED KEYWORD (Approval Gate & Single Comment Execution)
-    if (!reqs.keyword || KEYWORD_NOISE_WORDS.has(reqs.keyword.toLowerCase())) {
+    // extractCreatorRequirements has already rejected generic words unless the creator quoted them.
+    if (!reqs.keyword) {
       logger.warn(`Job ${job.id}: Invalid or generic comment keyword "${reqs.keyword}". Will not comment.`);
       return {
         success: false,

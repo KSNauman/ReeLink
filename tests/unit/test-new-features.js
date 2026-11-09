@@ -65,6 +65,7 @@ function createTestDb(testName) {
       waiting_since TEXT,
       initial_window_expires_at TEXT,
       last_inbox_check_at TEXT,
+      topic TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     );
@@ -125,7 +126,7 @@ test('Default Comment Keyword: defaults to 🙌 when no explicit keyword in capt
 
   const { job } = queue.createJob({
     threadId: 'user_thread_1',
-    senderUsername: 'nauman',
+    senderUsername: 'ksydn_',
     reelUrl: 'https://www.instagram.com/reel/DeHLVF5xOz_/',
     shortcode: 'DeHLVF5xOz_',
     enforceAllowlist: false,
@@ -209,7 +210,7 @@ test('Bot Menu & History: getTodayHistory retrieves followed, replied, and pendi
   // 1. Create a completed job with verified follow and reply
   const { job: job1 } = queue.createJob({
     threadId: 'thread_1',
-    senderUsername: 'nauman',
+    senderUsername: 'ksydn_',
     reelUrl: 'https://instagram.com/reel/ABC111/',
     shortcode: 'ABC111',
   });
@@ -232,7 +233,7 @@ test('Bot Menu & History: getTodayHistory retrieves followed, replied, and pendi
   // 2. Create a waiting job
   const { job: job2 } = queue.createJob({
     threadId: 'thread_1',
-    senderUsername: 'nauman',
+    senderUsername: 'ksydn_',
     reelUrl: 'https://instagram.com/reel/DEF222/',
     shortcode: 'DEF222',
   });
@@ -286,18 +287,18 @@ test('Bot Command Dispatch: handleBotCommand executes /history, /help, /status',
   const inbox = new InstagramInbox(null, { queue, sender: mockSender });
 
   // Test /help
-  await inbox.handleBotCommand('help', 'thread_user', 'nauman', 'msg_test_help_1');
+  await inbox.handleBotCommand('help', 'thread_user', 'ksydn_', 'msg_test_help_1');
   assert.strictEqual(deliveredDMs.length, 1);
   assert.ok(deliveredDMs[0].text.includes('ReelLink Bot Commands Menu'));
   assert.ok(deliveredDMs[0].text.includes('/history'));
 
   // Test /status
-  await inbox.handleBotCommand('status', 'thread_user', 'nauman', 'msg_test_status_1');
+  await inbox.handleBotCommand('status', 'thread_user', 'ksydn_', 'msg_test_status_1');
   assert.strictEqual(deliveredDMs.length, 2);
   assert.ok(deliveredDMs[1].text.includes('ReelLink System Status'));
 
   // Test /history
-  await inbox.handleBotCommand('history', 'thread_user', 'nauman', 'msg_test_history_1');
+  await inbox.handleBotCommand('history', 'thread_user', 'ksydn_', 'msg_test_history_1');
   assert.strictEqual(deliveredDMs.length, 3);
   assert.ok(deliveredDMs[2].text.includes('ReelLink Bot Activity (Today)'));
   assert.ok(deliveredDMs[2].text.includes('Creators Followed'));
@@ -327,7 +328,7 @@ test('Bot Command Dispatch: handleBotCommand executes !reset and resets pending 
   // Seed pending and waiting jobs
   const job1 = queue.createJob({
     threadId: 'thread_user',
-    senderUsername: 'nauman',
+    senderUsername: 'ksydn_',
     reelUrl: 'https://instagram.com/reel/TEST1/',
     shortcode: 'TEST1',
     enforceAllowlist: false,
@@ -336,7 +337,7 @@ test('Bot Command Dispatch: handleBotCommand executes !reset and resets pending 
 
   const job2 = queue.createJob({
     threadId: 'thread_user',
-    senderUsername: 'nauman',
+    senderUsername: 'ksydn_',
     reelUrl: 'https://instagram.com/reel/TEST2/',
     shortcode: 'TEST2',
     enforceAllowlist: false,
@@ -354,7 +355,7 @@ test('Bot Command Dispatch: handleBotCommand executes !reset and resets pending 
   const inbox = new InstagramInbox(null, { queue, sender: mockSender });
 
   // 1. Preview reset command without confirmation
-  await inbox.handleBotCommand('reset', 'thread_user', 'nauman', 'msg_test_reset_preview');
+  await inbox.handleBotCommand('reset', 'thread_user', 'ksydn_', 'msg_test_reset_preview');
   assert.strictEqual(deliveredDMs.length, 1);
   assert.ok(deliveredDMs[0].text.includes('ReelLink Reset Preview'));
   assert.ok(deliveredDMs[0].text.includes('Found 2 job(s) eligible for reset'));
@@ -365,7 +366,7 @@ test('Bot Command Dispatch: handleBotCommand executes !reset and resets pending 
   assert.strictEqual(preStats.awaiting_approval, 1);
 
   // 2. Execute confirmed reset command
-  await inbox.handleBotCommand('reset', 'thread_user', 'nauman', 'msg_test_reset_1', 'confirm');
+  await inbox.handleBotCommand('reset', 'thread_user', 'ksydn_', 'msg_test_reset_1', 'confirm');
   assert.strictEqual(deliveredDMs.length, 2);
   assert.ok(deliveredDMs[1].text.includes('ReelLink Reset Complete'));
   assert.ok(deliveredDMs[1].text.includes('2 eligible pending/waiting job(s)'));
@@ -385,7 +386,7 @@ test('Bot Command Dispatch: handleBotCommand executes !unfollow preview and conf
   // Seed followed creators today
   const job1 = queue.createJob({
     threadId: 'thread_user',
-    senderUsername: 'nauman',
+    senderUsername: 'ksydn_',
     reelUrl: 'https://instagram.com/reel/TEST_UNF1/',
     shortcode: 'TEST_UNF1',
     enforceAllowlist: false,
@@ -422,7 +423,7 @@ test('Bot Command Dispatch: handleBotCommand executes !unfollow preview and conf
   inbox.creatorManager = mockCreatorManager;
 
   // 1. Execute preview unfollow command without confirmation
-  await inbox.handleBotCommand('unfollow', 'thread_user', 'nauman', 'msg_test_unfollow_preview');
+  await inbox.handleBotCommand('unfollow', 'thread_user', 'ksydn_', 'msg_test_unfollow_preview');
   assert.strictEqual(deliveredDMs.length, 1);
   assert.ok(deliveredDMs[0].text.includes('ReelLink Unfollow Preview'));
   assert.ok(deliveredDMs[0].text.includes('@creator_to_unfollow'));
@@ -432,7 +433,7 @@ test('Bot Command Dispatch: handleBotCommand executes !unfollow preview and conf
   assert.strictEqual(followedBefore.length, 1);
 
   // 2. Execute confirmed unfollow command
-  await inbox.handleBotCommand('unfollow', 'thread_user', 'nauman', 'msg_test_unfollow_1', 'confirm');
+  await inbox.handleBotCommand('unfollow', 'thread_user', 'ksydn_', 'msg_test_unfollow_1', 'confirm');
   assert.strictEqual(deliveredDMs.length, 3); // Preview + Progress DM + Completion DM
   assert.ok(deliveredDMs[1].text.includes('Unfollowing 1 creator(s)'));
   assert.ok(deliveredDMs[2].text.includes('ReelLink Unfollow Complete'));
@@ -451,7 +452,7 @@ test('Native Message Forwarding: forwardLatestCreatorMessage simulation mode ret
     simulationMode: true,
   });
 
-  const result = await manager.forwardLatestCreatorMessage('test_creator', 'nauman', { isSimulation: true });
+  const result = await manager.forwardLatestCreatorMessage('test_creator', 'ksydn_', { isSimulation: true });
   assert.strictEqual(result.success, true);
   assert.strictEqual(result.isSimulated, true);
 });
